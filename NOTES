@@ -1,0 +1,11 @@
+This solution uses a microservices architecture with three separate services (`Part`, `Order`, and `Audit`):
+
+1. Part Service: Manages parts data.
+2. Order Service: Manages orders based on inventory checks and communicates with Part Service.
+3. Audit Service: Logs audit events triggered by actions in other services.
+
+These services communicate with each other using RESTful APIs and Feign for remote communication.
+Each service has its own database (in-memory H2 for simplicity), and they can be deployed independently.
+
+We can also use Kafka Topic for Audit.
+if any activity happen - it will publish events in kafka Topic - Audit service listen and insert audit detail.

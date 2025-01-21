@@ -1,0 +1,8 @@
+Logging and Monitoring
+Asynchronous service communication using Kafka Topic
+Synchronous service communication using RestTemplate or Feign Client
+API Gateway
+Authentication and Authorization
+Auto Scaling
+Caching
+

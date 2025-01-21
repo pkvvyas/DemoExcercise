@@ -1,0 +1,284 @@
+High-Level Design (HLD) -
+
+HLD focuses on the overall architecture and interaction between various components of the system.
+
+System Components:
+1. Client / User Interface:
+    Users can interact with the system through REST APIs to manage inventory, parts, suppliers, and orders.
+    Users can also trigger manual orders or initiate the automated inventory check.
+    API Layer (Controllers):
+
+    Exposes the system's functionality as RESTful endpoints for managing parts, inventory, orders, and suppliers.
+
+2. Business Logic Layer (Services):
+    InventoryService: Handles inventory-related tasks such as checking thresholds, updating parts, and placing orders automatically when inventory is low.
+    OrderService: Handles manual and automated order creation, status updates, and retrieving pending orders.
+    AuditService: Logs actions for audit purposes, including part and order modifications.
+
+3. Persistence Layer (Repositories):
+    JPA Repositories for Part, Order, and Supplier.
+    Stores and retrieves data to/from the relational database (e.g., H2).
+
+4. Database:
+    The relational database stores the data related to Parts, Suppliers, Orders, and Audit Logs.
+
+5. Scheduler:
+    A scheduled task checks inventory levels periodically (e.g., daily) and automatically places orders if needed.
+
+Data Flow:
+
+1. Inventory Management:
+    Inventory is updated manually by the garage owner.
+    The InventoryService runs a check at regular intervals or when triggered, verifying if any part’s stock is below the threshold.
+    If the stock is low, it places an order using the OrderService.
+
+2. Order Management:
+    Orders are created by the system automatically (due to low stock) or manually (via user requests).
+    The order’s status is updated as it is processed.
+
+3. Audit:
+    Every time a part or order is added or modified, the AuditService logs the change for tracking purposes.
+
+4. Supplier Management:
+    Parts are linked to suppliers, either Supplier-A (Local) or Supplier-B (International).
+    For Supplier-B, orders can only be placed within the discount window (12:00 AM - 01:00 AM).
+
+
+
+
+
+Low-Level Design (LLD) -
+
+LLD dives deeper into how individual components work. It includes the structure of entities, services, controllers, and interactions.
+
+1. Entity Classes
+
+@Entity
+public class Part {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+    private Integer thresholdLimit;  // The minimum stock level to trigger orders.
+    private Integer availableQty;    // The current stock level.
+    private Integer minimumOrderQty; // The minimum order quantity when placing an order.
+
+    @ManyToOne
+    @JoinColumn(name = "supplier_id")
+    private Supplier supplier;  // Foreign key to Supplier (Supplier-A or Supplier-B).
+
+    // Getters and Setters
+}
+
+
+@Entity
+public class Supplier {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;  // Supplier name (Supplier-A or Supplier-B).
+    private String type;  // "Local" or "International" (Supplier-A or Supplier-B).
+
+    // Getters and Setters
+}
+
+
+@Entity
+public class Order {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private LocalDateTime orderDate;
+    private String status;  // "Pending", "Completed"
+
+    @ManyToOne
+    @JoinColumn(name = "part_id")
+    private Part part;  // Foreign key to Part.
+
+    private Integer quantityOrdered;
+    private Double totalAmount;
+
+    @ManyToOne
+    @JoinColumn(name = "supplier_id")
+    private Supplier supplier;  // Foreign key to Supplier.
+
+    // Getters and Setters
+}
+
+
+@Entity
+public class AuditLog {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String action;       // Action (e.g., "Created", "Updated")
+    private LocalDateTime timestamp;
+    private String entity;       // Entity affected (Part, Order, Supplier)
+    private String details;      // Details of the action.
+
+    // Getters and Setters
+}
+
+# 2. Service Layer
+
+## InventoryService
+
+@Service
+public class InventoryService {
+
+    @Autowired
+    private PartRepository partRepository;
+    @Autowired
+    private OrderService orderService;
+
+    public void checkAndPlaceOrders() {
+        List<Part> partsToOrder = partRepository.findByAvailableQtyLessThan(thresholdLimit);
+        for (Part part : partsToOrder) {
+            placeOrderForPart(part);
+        }
+    }
+
+    private void placeOrderForPart(Part part) {
+        // Check for Supplier-B discount time window
+        Supplier supplier = part.getSupplier();
+        if ("International".equals(supplier.getType())) {
+            if (isDiscountTime()) {
+                // Place order with discount logic
+            } else {
+                // Regular order logic
+            }
+        }
+        Order order = new Order();
+        order.setPart(part);
+        order.setQuantityOrdered(part.getMinimumOrderQty());
+        order.setOrderDate(LocalDateTime.now());
+        order.setStatus("Pending");
+        order.setSupplier(supplier);
+        orderService.placeOrder(order);
+    }
+
+    private boolean isDiscountTime() {
+        LocalDateTime now = LocalDateTime.now();
+        return now.getHour() == 0 && now.getMinute() < 60;  // Between 12:00 AM and 01:00 AM
+    }
+}
+
+
+## OrderService - Handles the creation and status of orders.
+
+@Service
+public class OrderService {
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    public void placeOrder(Order order) {
+        orderRepository.save(order);
+    }
+
+    public List<Order> getPendingOrders() {
+        return orderRepository.findByStatus("Pending");
+    }
+}
+
+
+## AuditService - Logs all changes to parts, orders, and suppliers for audit purposes.
+
+@Service
+public class AuditService {
+
+    @Autowired
+    private AuditLogRepository auditLogRepository;
+
+    public void logAction(String action, String entity, String details) {
+        AuditLog log = new AuditLog();
+        log.setAction(action);
+        log.setEntity(entity);
+        log.setDetails(details);
+        log.setTimestamp(LocalDateTime.now());
+        auditLogRepository.save(log);
+    }
+}
+
+# 3. Controller Layer
+
+## InventoryController - Handles requests related to inventory and automatic order placement.
+
+@RestController
+@RequestMapping("/api/inventory")
+public class InventoryController {
+
+    @Autowired
+    private InventoryService inventoryService;
+
+    @PostMapping("/check-and-place-orders")
+    public ResponseEntity<Void> checkAndPlaceOrders() {
+        inventoryService.checkAndPlaceOrders();
+        return ResponseEntity.status(HttpStatus.OK).build();
+    }
+}
+
+
+## OrderController - Manages the creation of orders.
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+
+    @Autowired
+    private OrderService orderService;
+
+    @PostMapping
+    public ResponseEntity<Order> placeOrder(@RequestBody Order order) {
+        orderService.placeOrder(order);
+        return ResponseEntity.status(HttpStatus.CREATED).body(order);
+    }
+
+    @GetMapping("/pending")
+    public List<Order> getPendingOrders() {
+        return orderService.getPendingOrders();
+    }
+}
+
+
+---
+
+# 4. Scheduler - A ScheduledTask will check inventory and place orders on a daily basis.
+
+@Configuration
+@EnableScheduling
+public class ScheduledTask {
+
+    @Autowired
+    private InventoryService inventoryService;
+
+    @Scheduled(cron = "0 0 0 * * ?")  // Runs every day at midnight
+    public void checkInventoryAndPlaceOrders() {
+        inventoryService.checkAndPlaceOrders();
+    }
+}
+
+
+5. Database Design
+
+The system will use a relational database (e.g., H2 Database) to store:
+
+- Parts with their current stock, threshold limit, and associated supplier.
+- Orders with their status, quantity ordered, and associated part and supplier.
+- Suppliers to manage whether they are local or international.
+- Audit Logs to track all changes made to parts, orders, and suppliers.
+
+# Tables:
+
+- parts: Stores part details (ID, name, threshold, availableQty, minimumOrderQty, supplier_id).
+- suppliers: Stores supplier details (ID, name, type).
+- orders: Stores order details (ID, part_id, quantityOrdered, orderDate, status, totalAmount, supplier_id).
+- audit_logs: Logs changes to the system (ID, action, entity, details, timestamp).
